@@ -1,0 +1,169 @@
+#!/usr/bin/env python3
+"""omarchy-tidy — read-only audit of what's installed and what's left behind.
+
+Nothing here deletes anything. Each finding comes with the command you'd run
+to clean it up yourself.
+"""
+
+import argparse
+import json
+import os
+import re
+import sys
+import time
+from dataclasses import asdict
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from tidy_lib import caches, clones, leftovers, others, packages  # noqa: E402
+from tidy_lib.util import HOME, Ctx, bold, cyan, dim, progress_done, table, yellow  # noqa: E402
+
+SECTIONS = {
+    "packages": (packages, "pacman/AUR profile: sources, why each explicit package is here, orphans, AUR health"),
+    "others": (others, "flatpak, pipx, uv, npm -g, cargo, go, gem, mise, conda, docker, AppImages, ~/.local/bin"),
+    "clones": (clones, "git repos under ~ with local-work/stale verdicts, plus yay/paru build clones"),
+    "caches": (caches, "cache and data dirs by size, with the command that reclaims each"),
+    "leftovers": (leftovers, "config dirs of removed apps, unowned system files, .pacnew, backups, broken links"),
+}
+OVERVIEW_BLOCKS = {"By source", "Package managers"}
+STATE = Path(os.environ.get("XDG_STATE_HOME", HOME / ".local/state")) / "omarchy-tidy"
+ANSI = re.compile(r"\033\[[0-9;]*m")
+
+
+def render(sec, overview=False, out=print):
+    out(bold(cyan(f"━━ {sec.title} ")) + cyan("━" * max(0, 60 - len(sec.title))))
+    for line in sec.summary:
+        out(f"  {line}")
+    for heading, rows, headers, aligns, note in sec.blocks:
+        if overview and heading not in OVERVIEW_BLOCKS:
+            continue
+        out("")
+        out(bold(f"  ▸ {heading}"))
+        for line in table(rows, headers, aligns, indent="    ") if rows else []:
+            out(line)
+        if note:
+            out(dim(f"    {note}"))
+    if sec.suggest:
+        out("")
+        out(bold("  Suggested"))
+        for why, cmd in sec.suggest:
+            out(f"    {why}")
+            out(f"      {yellow('$')} {cmd}")
+    for n in sec.notes:
+        out(dim(f"  skipped: {n}"))
+    out("")
+
+
+def plain(o):
+    """Strip ANSI colour from every string in a nested structure."""
+    if isinstance(o, str):
+        return ANSI.sub("", o)
+    if isinstance(o, (list, tuple)):
+        return [plain(x) for x in o]
+    if isinstance(o, dict):
+        return {k: plain(v) for k, v in o.items()}
+    return o
+
+
+def snapshot(ctx, results):
+    STATE.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    pk = {n: {"version": p.version, "repo": p.repo, "explicit": p.explicit} for n, p in ctx.packages.items()}
+    doc = {"time": time.time(), "packages": pk, "sections": {r.key: plain(asdict(r)) for r in results}}
+    path = STATE / f"{stamp}.json"
+    path.write_text(json.dumps(doc, indent=1))
+    return path
+
+
+def cmd_diff(args):
+    snaps = sorted(STATE.glob("*.json"))
+    if args.rest:
+        old = Path(args.rest[0])
+        new = Path(args.rest[1]) if len(args.rest) > 1 else snaps[-1]
+    elif len(snaps) >= 2:
+        old, new = snaps[-2], snaps[-1]
+    else:
+        sys.exit(f"need two snapshots in {STATE} (run `omarchy-tidy --save` now and again later), "
+                 f"or pass two snapshot files")
+    a, b = (json.loads(Path(p).read_text())["packages"] for p in (old, new))
+    print(bold(f"Package changes {Path(old).stem} → {Path(new).stem}"))
+    added = sorted(set(b) - set(a))
+    removed = sorted(set(a) - set(b))
+    became_exp = sorted(n for n in set(a) & set(b) if b[n]["explicit"] and not a[n]["explicit"])
+    became_dep = sorted(n for n in set(a) & set(b) if a[n]["explicit"] and not b[n]["explicit"])
+    for label, names, fmt in (("installed", added, lambda n: f"{n} ({b[n]['repo']}{', explicit' if b[n]['explicit'] else ''})"),
+                              ("removed", removed, lambda n: f"{n} ({a[n]['repo']})"),
+                              ("now explicit", became_exp, str),
+                              ("now a dependency", became_dep, str)):
+        print(f"\n  {label}: {len(names)}")
+        for n in names:
+            print(f"    {fmt(n)}")
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        prog="omarchy-tidy", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="sections:\n" + "\n".join(f"  {k:<10} {d}" for k, (_, d) in SECTIONS.items())
+               + "\n  all        every section in full"
+               + "\n  diff       package changes between the last two --save snapshots (or: diff OLD NEW)"
+               + "\n  clean      interactive cleanup; limit it with section names: clean packages caches")
+    ap.add_argument("section", nargs="?", default="overview",
+                    choices=["overview", "all", "diff", "clean", *SECTIONS], metavar="SECTION",
+                    help="overview (default), all, diff, clean, or one of the sections below")
+    ap.add_argument("rest", nargs="*", help=argparse.SUPPRESS)
+    ap.add_argument("--json", action="store_true", help="machine-readable output (no colour)")
+    ap.add_argument("--offline", action="store_true", help="skip the AUR lookup for foreign packages")
+    ap.add_argument("--save", action="store_true", help=f"also save a snapshot to {STATE}")
+    ap.add_argument("--dry-run", action="store_true", help="clean: show every step and item, change nothing")
+    args = ap.parse_args()
+
+    if os.geteuid() == 0:
+        sys.exit("run omarchy-tidy as your normal user: it audits your home directory, and needs no root")
+    if args.section == "diff":
+        return cmd_diff(args)
+    if args.section != "clean" and args.rest:
+        ap.error(f"unexpected arguments: {' '.join(args.rest)}")
+    if args.section == "clean":
+        bad = [r for r in args.rest if r not in SECTIONS]
+        if bad:
+            ap.error(f"clean takes section names ({', '.join(SECTIONS)}), not: {' '.join(bad)}")
+        if not args.dry_run and not (sys.stdin.isatty() and sys.stdout.isatty()):
+            sys.exit("clean is interactive: run it in a terminal (or use --dry-run)")
+
+    if args.section == "clean":
+        keys = args.rest or list(SECTIONS)
+    else:
+        keys = list(SECTIONS) if args.section in ("overview", "all") else [args.section]
+    overview = args.section == "overview"
+    ctx = Ctx(offline=args.offline)
+    results = []
+    for k in keys:
+        mod = SECTIONS[k][0]
+        results.append(mod.collect(ctx, limit=15 if overview else None))
+    progress_done()
+
+    if args.section == "clean":
+        from tidy_lib import clean
+        return clean.run(results, dry=args.dry_run)
+
+    if args.json:
+        print(json.dumps([plain(asdict(r)) for r in results], indent=1))
+    else:
+        for r in results:
+            render(r, overview=overview)
+        if overview:
+            print(dim("  Details: omarchy-tidy <section>   (packages, others, clones, caches, leftovers, all)"))
+            print(dim("  Clean up interactively: omarchy-tidy clean   (try --dry-run first)"))
+    if args.save:
+        print(dim(f"  snapshot saved: {snapshot(ctx, results)}"), file=sys.stderr)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        progress_done()
+        sys.exit(130)
+    except BrokenPipeError:
+        sys.exit(0)
