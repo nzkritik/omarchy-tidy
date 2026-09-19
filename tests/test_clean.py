@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import importlib.machinery
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
@@ -349,6 +350,34 @@ class GitClones(Case):
         ok = self.remove(path_item(self.repo), recheck=clones._still_disposable)
         self.assertFalse(ok)
         self.assertTrue((self.repo / "wip").exists())
+
+
+class Serialisation(Case):
+    """--json and --save must survive live Action objects (Paths, callables)."""
+
+    def entry(self):
+        import importlib.util
+        spec = importlib.util.spec_from_loader(
+            "omarchy_tidy_entry",
+            importlib.machinery.SourceFileLoader("omarchy_tidy_entry",
+                                                 str(Path(__file__).resolve().parent.parent / "omarchy-tidy")))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_section_with_actions_is_json_serialisable(self):
+        import json
+        from tidy_lib.util import Section
+        entry = self.entry()
+        sec = Section("clones", "Git clones")
+        sec.block("b", [("\033[31mred\033[0m", "x")], ("a", "b"))
+        sec.actions.append(Action("clones.stale", "Delete stale git clones", "why", "paths",
+                                  root=HOME / ".cache", recheck=lambda p: None,
+                                  items=[path_item(self.root)]))
+        out = json.dumps(entry.as_json(sec))
+        self.assertIn('"items": 1', out)
+        self.assertNotIn("\033", out)
+        self.assertEqual(json.loads(out)["actions"][0]["key"], "clones.stale")
 
 
 if __name__ == "__main__":

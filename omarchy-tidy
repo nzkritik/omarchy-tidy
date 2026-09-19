@@ -56,21 +56,34 @@ def render(sec, overview=False, out=print):
 
 
 def plain(o):
-    """Strip ANSI colour from every string in a nested structure."""
+    """Strip ANSI colour from every string in a nested structure, and reduce anything
+    JSON cannot hold (Paths, callables) to text."""
     if isinstance(o, str):
         return ANSI.sub("", o)
     if isinstance(o, (list, tuple)):
         return [plain(x) for x in o]
     if isinstance(o, dict):
         return {k: plain(v) for k, v in o.items()}
-    return o
+    if isinstance(o, (int, float, bool, type(None))):
+        return o
+    if isinstance(o, Path):
+        return str(o)
+    return getattr(o, "__name__", None) or str(o)
+
+
+def as_json(sec):
+    """A Section as JSON: clean actions become a summary, not their live objects."""
+    d = plain(asdict(sec))
+    d["actions"] = [{"key": a.key, "title": plain(a.title), "kind": a.kind,
+                     "size": a.size, "items": len(a.items or [])} for a in sec.actions]
+    return d
 
 
 def snapshot(ctx, results):
     STATE.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
     pk = {n: {"version": p.version, "repo": p.repo, "explicit": p.explicit} for n, p in ctx.packages.items()}
-    doc = {"time": time.time(), "packages": pk, "sections": {r.key: plain(asdict(r)) for r in results}}
+    doc = {"time": time.time(), "packages": pk, "sections": {r.key: as_json(r) for r in results}}
     path = STATE / f"{stamp}.json"
     path.write_text(json.dumps(doc, indent=1))
     return path
@@ -148,7 +161,7 @@ def main():
         return clean.run(results, dry=args.dry_run)
 
     if args.json:
-        print(json.dumps([plain(asdict(r)) for r in results], indent=1))
+        print(json.dumps([as_json(r) for r in results], indent=1))
     else:
         for r in results:
             render(r, overview=overview)
