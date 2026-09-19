@@ -107,13 +107,17 @@ broken symlinks and binaries that shadow a packaged command.
 - *local work*: uncommitted, unpushed, stashed, or no remote. Deleting it loses something.
 - *stale*: clean, pushed, and untouched for 180+ days, so it can be re-cloned later.
 - *clean & pushed*
-- *managed*: Omarchy itself, its plugins and themes, and tmux plugins.
+- *managed*: Omarchy itself, its plugins and themes, tmux plugins, and Omarchy's pre-upgrade backup
+  of itself.
+- *synced*: inside `~/Dropbox`, Nextcloud, OneDrive or Sync. It's never called stale, because deleting
+  it also deletes the cloud copy.
 
 Also shows yay/paru build clones for packages you've since removed.
 
 **caches**: sizes of known caches (uv, pip, Hugging Face, yay, npm, go, cargo, pacman, journal,
 core dumps, libvirt images, …) with the command that reclaims each, plus anything else in `~/.cache`
-over 256M.
+over 256M. Hugging Face models and VM disks are labelled as data, not cache. `clean` offers models one
+at a time (`hf cache rm`), and VM disks are left for you to handle.
 
 **leftovers**:
 - dirs in `~/.config`, `~/.local/share`, `~/.local/state`, `~/.cache` and `~/.*` whose name matches
@@ -131,9 +135,18 @@ adding a name or glob per line to `~/.config/omarchy-tidy/ignore`.
 
 ## Clean mode
 
-`clean` turns the findings into steps: uninstall packages you added, remove orphans, prune caches,
-delete yay clones and stale git clones, trash leftover config and backups, fix broken links and dead
-launchers, and merge `.pacnew` files. Before each step it shows what the step does and how much space
+`clean` turns the findings into steps, in section order:
+
+| Section | Steps |
+|---|---|
+| packages | uninstall packages you added (oldest install first) · remove orphans · mark packages as dependencies · prune the pacman cache |
+| others | uninstall pipx apps whose Python is gone · `mise prune` · `docker system prune` |
+| clones | delete stale git clones · delete yay/paru build clones of removed packages |
+| caches | delete regenerable cache folders · uv / pip / npm / go cache commands · core dumps · journal vacuum · pick Hugging Face models · other large `~/.cache` entries |
+| leftovers | app folders of uninstalled software · `pacdiff` · old backups · broken symlinks · dead launchers · broken venvs |
+
+Steps only appear when there's something to do. A path found by two sections (a big `~/.cache` folder
+of an uninstalled app, say) is offered only once. Before each step it shows what the step does and how much space
 it frees. Then it either asks yes/no (`gum confirm`) or opens a multi-select (`gum choose`) where
 **nothing is preselected**. Esc skips a step and Ctrl-C stops the run. Without gum it falls back to
 typed prompts.
@@ -155,7 +168,9 @@ typed prompts.
 - **Root:** sudo only ever runs fixed commands with validated package names. It never gets a path from
   your home folder.
 - Every run ends with the free-space change, and every action is appended to
-  `~/.local/state/omarchy-tidy/clean.log`.
+  `~/.local/state/omarchy-tidy/clean.log`. Items moved to the Trash still use disk space until you
+  empty it. `gio trash --list` shows them, and your file manager can restore them.
+- It refuses to run without a terminal (except `--dry-run`), and refuses to run as root.
 
 ## Guarantees (report commands)
 
