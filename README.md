@@ -179,6 +179,29 @@ typed prompts.
 - The only network call is one AUR RPC request listing your foreign package names (`--offline` skips it).
 - Remote URLs have any `user:token@` stripped before they're printed or saved.
 
+## Tests
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+`tests/test_clean.py` covers what `clean` relies on to be safe:
+- the path guards, tested against a planted symlinked parent, a path swapped after the scan, a
+  replaced file, `..`, relative paths, the root itself and the protected folders
+- symlinks being unlinked rather than followed, trash vs delete, and dry runs changing nothing
+- the log refusing a planted symlink
+- package-name validation before anything reaches `sudo`
+- the protected-package list
+- git clones re-checked for uncommitted, unpushed and stashed work before deletion
+- a regression test that inspecting a repo never rewrites its `.git/index`.
+
+The tests delete real files, so they run in a throwaway `HOME` (plus the XDG folders), which is set
+before `tidy_lib` is imported. They abort if the tool sees any other `HOME`, and remove the sandbox
+afterwards. Standard library only; `git` and `gio` tests are skipped when those tools are missing.
+
+When adding a guard, check that its test fails with the guard removed. A test that passes for the
+wrong reason (for example, a path the test never created reports "already gone") protects nothing.
+
 ## Layout
 
 ```
@@ -186,6 +209,7 @@ omarchy-tidy         entry point: argument parsing, rendering, snapshots, diff
 tidy_lib/util.py     Ctx (pacman db, sync repos, owned files, Omarchy lists), Section, helpers
 tidy_lib/packages.py tidy_lib/others.py tidy_lib/clones.py tidy_lib/caches.py tidy_lib/leftovers.py
 tidy_lib/clean.py    the interactive runner: prompts, path guards, trash/delete, log
+tests/test_clean.py  sandboxed safety tests (unittest)
 ```
 
 Each section module has `collect(ctx, limit) -> Section`. A Section carries report blocks plus `actions`
