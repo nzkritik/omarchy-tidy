@@ -125,6 +125,28 @@ def du(paths, timeout=600):
     return sizes
 
 
+def compressed_fs(path=HOME):
+    """Compression algorithm of the filesystem holding `path`, if any.
+
+    du reports uncompressed sizes, so on a compressed filesystem every size in this report
+    is an upper bound on the space a deletion actually frees.
+    """
+    best = ("", 0)
+    try:
+        for line in Path("/proc/mounts").read_text().splitlines():
+            f = line.split()
+            if len(f) < 4:
+                continue
+            target, opts = f[1], f[3]
+            if (str(path) == target or str(path).startswith(target.rstrip("/") + "/")) and len(target) >= best[1]:
+                algo = next((o.split("=", 1)[1] for o in opts.split(",")
+                             if o.startswith(("compress=", "compress-force="))), "")
+                best = (algo, len(target))
+    except OSError:
+        return ""
+    return best[0]
+
+
 def mtime(p):
     try:
         return Path(p).stat().st_mtime

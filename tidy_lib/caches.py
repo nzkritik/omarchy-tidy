@@ -4,7 +4,7 @@ import json
 import re
 from pathlib import Path
 
-from .util import HOME, Action, Item, Section, du, have, human, path_item, progress, run, tilde
+from .util import HOME, Action, Item, Section, compressed_fs, du, have, human, path_item, progress, run, tilde
 
 C = HOME / ".cache"
 # path -> (what it is, how to reclaim it). Checked in this order; missing paths are skipped.
@@ -105,6 +105,10 @@ def collect(ctx, limit=None):
     cache_total = sum(osz.values()) + sum(sizes.get(str(p)) or 0 for p, _, _ in known if p.parent == C)
     s.summary.append(f"~/.cache total: {human(cache_total)}")
     s.summary.append(f"known caches and data stores (incl. system paths): {human(total)}")
+    algo = compressed_fs()
+    if algo:
+        s.summary.append(f"note: {tilde(HOME)} is on a filesystem compressed with {algo}; these sizes are "
+                         "uncompressed, so deleting frees less than they suggest")
 
     rc, out, _ = run(["journalctl", "--disk-usage"])
     if rc == 0 and out.strip():

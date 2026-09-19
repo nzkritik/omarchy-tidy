@@ -116,7 +116,9 @@ Also shows yay/paru build clones for packages you've since removed.
 
 **caches**: sizes of known caches (uv, pip, Hugging Face, yay, npm, go, cargo, pacman, journal,
 core dumps, libvirt images, …) with the command that reclaims each, plus anything else in `~/.cache`
-over 256M. Hugging Face models and VM disks are labelled as data, not cache. `clean` offers models one
+over 256M. On a compressed filesystem (btrfs with `compress=zstd`, as Omarchy installs by default)
+the report says so: every size comes from `du`, which reports uncompressed sizes, so a deletion frees
+less disk space than the figure suggests. Hugging Face models and VM disks are labelled as data, not cache. `clean` offers models one
 at a time (`hf cache rm`), and VM disks are left for you to handle.
 
 **leftovers**:
