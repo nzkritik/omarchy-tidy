@@ -124,6 +124,8 @@ def check_path(item, root):
         try:
             if stat.S_ISLNK(os.lstat(d).st_mode):
                 return f"{tilde(d)} is a symlink"
+        except FileNotFoundError:
+            return "already gone"   # an earlier step removed the directory it was in
         except OSError as e:
             return f"cannot inspect {tilde(d)}: {e.strerror}"
     try:
@@ -157,7 +159,12 @@ def remove_path(item, root, recheck, dry):
         elif p.is_symlink() or not p.is_dir():
             os.unlink(p)
         else:
-            shutil.rmtree(p)
+            try:
+                shutil.rmtree(p)
+            except PermissionError:
+                if not _make_removable(p):
+                    raise
+                shutil.rmtree(p)
     except OSError as e:
         print(red(f"    failed {label}: {e}"))
         log(f"failed {verb} {item.value}: {e}")
@@ -165,6 +172,36 @@ def remove_path(item, root, recheck, dry):
     print(green(f"    {'trashed' if verb == 'trash' else 'deleted'} {label}") + dim(f"  {human(item.size)}" if item.size else ""))
     log(f"{verb} {item.value}")
     return True
+
+
+def _make_removable(top):
+    """Restore owner rwx on directories we own but cannot list.
+
+    makepkg leaves yay/paru build dirs as --x--x--x. chmod only needs ownership, so this
+    can descend where scandir cannot. Symlinks are never followed or chmod'ed.
+    """
+    fixed = 0
+    stack = [str(top)]
+    while stack:
+        d = stack.pop()
+        try:
+            st = os.lstat(d)
+        except OSError:
+            continue
+        if not stat.S_ISDIR(st.st_mode) or stat.S_ISLNK(st.st_mode):
+            continue
+        if st.st_uid == os.geteuid() and (st.st_mode & 0o700) != 0o700:
+            try:
+                os.chmod(d, st.st_mode | 0o700)
+                fixed += 1
+            except OSError:
+                continue
+        try:
+            with os.scandir(d) as it:
+                stack += [e.path for e in it if e.is_dir(follow_symlinks=False)]
+        except OSError:
+            continue
+    return fixed
 
 
 def do_action(a, dry):

@@ -140,6 +140,42 @@ class PathGuards(Case):
         self.assertFalse((self.root / "oldapp").exists())
         self.assertTrue((SANDBOX / ".local/share/Trash/files/oldapp/cfg").exists())
 
+    def test_deletes_makepkg_style_unlistable_dirs(self):
+        """yay build dirs are left as --x--x--x; we own them, so fix the mode and retry."""
+        (self.root / "build/pkg/inner").mkdir(parents=True)
+        (self.root / "build/pkg/inner/f").write_text("x")
+        (self.root / "build/pkg").chmod(0o111)
+        try:
+            self.assertTrue(self.remove(path_item(self.root / "build")))
+            self.assertFalse((self.root / "build").exists())
+        finally:
+            if (self.root / "build/pkg").exists():
+                (self.root / "build/pkg").chmod(0o755)
+
+    def test_permission_repair_never_follows_symlinks(self):
+        """A link to a tight dir outside the tree must not be chmod'ed."""
+        outside = self.d / "outside"
+        outside.mkdir()
+        (outside / "f").write_text("x")
+        outside.chmod(0o111)
+        (self.root / "build").mkdir()
+        os.symlink(outside, self.root / "build/link")
+        try:
+            clean._make_removable(self.root / "build")
+            self.assertEqual(outside.stat().st_mode & 0o777, 0o111)
+        finally:
+            outside.chmod(0o755)
+
+    def test_permission_repair_reports_nothing_to_fix(self):
+        (self.root / "plain").mkdir()
+        self.assertEqual(clean._make_removable(self.root / "plain"), 0)
+
+    def test_vanished_parent_reads_as_already_gone(self):
+        (self.root / "gone").mkdir()
+        item = path_item(self.root / "gone/link")
+        (self.root / "gone").rmdir()
+        self.assertEqual(clean.check_path(item, self.root), "already gone")
+
     def test_rmtree_is_symlink_attack_resistant_here(self):
         self.assertTrue(shutil.rmtree.avoids_symlink_attacks)
 
