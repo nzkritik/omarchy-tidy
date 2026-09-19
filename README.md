@@ -4,6 +4,51 @@ An audit of an Omarchy (Arch + Hyprland) system: what's installed, where it came
 uninstalls left behind. The report commands are read-only. Every finding comes with the command you'd
 run to clean it up, and `omarchy-tidy clean` walks through those cleanups with you, one step at a time.
 
+## Who this is for
+
+It's meant for **older Omarchy installs**, and for any Omarchy system that has seen **a lot of package
+testing**: installing things to try them, removing them, switching between AUR builds, trying AI tools
+that each bring their own Python, Node or model cache. Uninstalling a package doesn't remove
+everything that came with it. Over time you collect:
+- orphaned dependencies
+- AUR build folders for software that's long gone
+- config folders for apps you no longer have
+- `.pacnew` files you never merged
+- Omarchy pre-upgrade backups
+- broken symlinks and launchers
+- tens or hundreds of gigabytes of caches.
+
+On a fresh Omarchy install there's little to find. The report will mostly confirm that.
+
+## Read before you run `clean`
+
+**Understand the report before you clean anything.** The `clean` step runs real commands:
+
+- `sudo pacman -Rns` (remove packages together with dependencies nothing else needs)
+- `sudo paccache` and `sudo pacdiff`
+- `sudo journalctl --vacuum-size`
+- `uv`/`pip`/`npm`/`go` cache commands
+- permanent deletion of caches, AUR build folders and stale git clones
+- moving config folders and backups to the Trash.
+
+It asks before each step, nothing is preselected, and pacman asks again. But it can't know that a
+package you installed two years ago is the one your printer needs, or that a "leftover" config folder
+belongs to a program you run from a script.
+
+Suggested order:
+
+1. Run `omarchy-tidy` and read the overview. Then read the detailed sections (`omarchy-tidy packages`,
+   `omarchy-tidy leftovers`, …) for the areas you plan to clean.
+2. Look up any command in the **Suggested** lines that you don't recognise. Know what `pacman -Rns`,
+   `paccache -ruk0` or `pacdiff` will do before you let this tool run them.
+3. Run `omarchy-tidy clean --dry-run` to see every step and item it would offer.
+4. Clean one area at a time, starting with the low-risk ones. For example, run
+   `omarchy-tidy clean caches` before `omarchy-tidy clean packages`.
+5. Have a backup or a snapshot (Omarchy's btrfs/snapper snapshots, or your own) before you remove packages.
+
+The folder-name matching in **leftovers** is a guess. Treat every entry there as a suggestion to check,
+not a verdict. You use this tool at your own risk. See [LICENSE](LICENSE).
+
 ```
 omarchy-tidy                 # overview: every section's summary + suggested commands
 omarchy-tidy packages        # full pacman/AUR profile
@@ -23,10 +68,19 @@ omarchy-tidy clean              # interactive cleanup
 omarchy-tidy clean packages caches   # only these sections
 ```
 
-Install: `ln -s ~/Work/omarchy-tidy/omarchy-tidy ~/.local/bin/omarchy-tidy`. The command is named
-`omarchy-tidy` rather than `tidy` because Arch's `extra` repo ships HTML Tidy as `/usr/bin/tidy`.
+## Install
 
-Needs only Python 3 and `expac`. `paccache` (pacman-contrib) is optional. Run it as your normal user:
+```bash
+git clone https://github.com/nzkritik/omarchy-tidy.git
+ln -s "$PWD/omarchy-tidy/omarchy-tidy" ~/.local/bin/omarchy-tidy
+sudo pacman -S --needed expac pacman-contrib
+```
+
+The command is named `omarchy-tidy` rather than `tidy` because Arch's `extra` repo ships HTML Tidy as
+`/usr/bin/tidy`.
+
+Needs only Python 3 and `expac`. `pacman-contrib` (paccache, pacdiff) is optional; `gum` (shipped
+with Omarchy) makes the clean prompts nicer. Run it as your normal user:
 it refuses to run as root.
 
 ## What each section reports
